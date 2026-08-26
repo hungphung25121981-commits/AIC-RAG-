@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime data & generated artifacts (created by main.py at run time,
+# paths configurable in config/settings.yaml)
+data/
+logs/*
+!logs/.gitkeep
+*.parquet
+*.faiss
+*.index
+*.pkl
+
+# Jupyter (if you use notebooks locally, they're not tracked here)
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
