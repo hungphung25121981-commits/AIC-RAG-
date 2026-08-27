@@ -30,7 +30,8 @@ Usage
     # trake : locate N sequential sub-moments of one event inside a single video.
     python main.py trake --stages "giam nhay" "bay qua xa" "tiep dat" "dung day" \
         --query "van dong vien nhay xa" --out-csv trake.csv
-
+    # --wandb APIKEY_WWANDB (After running, W&B will print a link with an ID of the run EX: wandb: Run url = .../runs/xyz123 -> ID is xyz123)
+    # --wandb-run-id ID ( IT will not create a new project but operate the old run of the ID)
 Run `python main.py <command> --help` for per-command options. All
 defaults are pulled from config/settings.yaml; CLI flags override them
 for a single run only (the yaml file itself is never modified).
