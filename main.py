@@ -391,7 +391,19 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     cfg = load_config()
     paths = cfg["paths"]
-
+    base_parser = argparse.ArgumentParser(add_help=False)
+    base_parser.add_argument(
+        "--wandb", type=str, default=None, metavar="API_KEY",
+        help="Cung cap W&B API Key de log ket qua qua trinh chay."
+    )
+    base_parser.add_argument(
+        "--wandb-project", type=str, default="video-visual-rag",
+        help="Ten Project tren W&B (mac dinh: video-visual-rag)."
+    )
+    base_parser.add_argument(
+        "--wandb-run-id", type=str, default=None, metavar="RUN_ID",
+        help="ID cua Run cu de chay tiep neu bi loi. Bo trong de tao moi."
+    )
     parser = argparse.ArgumentParser(
         prog="main.py",
         description="video-visual-rag CLI: run each pipeline phase independently, or query an existing index.",
@@ -399,7 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # --- extract (Phase 1) ---
-    p_extract = subparsers.add_parser("extract", help="Phase 1: keyframe extraction (SSIM + scene detect).")
+    p_extract = subparsers.add_parser("extract", parents=[base_parser], help="Phase 1: keyframe extraction (SSIM + scene detect).")
     p_extract.add_argument("--videos-dir", default=paths["raw_videos_dir"])
     p_extract.add_argument("--keyframes-dir", default=paths["keyframes_dir"])
     p_extract.add_argument("--output-csv", default=paths["keyframe_map_csv"])
@@ -412,7 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.set_defaults(func=cmd_extract)
 
     # --- caption (Phase 2) ---
-    p_caption = subparsers.add_parser("caption", help="Phase 2: OCR-only captioning (no VLM) -> metadata.parquet.")
+    p_caption = subparsers.add_parser("caption", parents=[base_parser], help="Phase 2: OCR-only captioning (no VLM) -> metadata.parquet.")
     p_caption.add_argument("--keyframe-map", default=paths["keyframe_map_csv"])
     p_caption.add_argument("--video-info-dir", default=paths["video_info_dir"])
     p_caption.add_argument("--keyframes-dir", default=paths["keyframes_dir"])
@@ -420,7 +432,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_caption.set_defaults(func=cmd_caption)
 
     # --- index (Phase 3) ---
-    p_index = subparsers.add_parser("index", help="Phase 3: build FAISS + BM25 hybrid index.")
+    p_index = subparsers.add_parser("index", parents=[base_parser], help="Phase 3: build FAISS + BM25 hybrid index.")
     p_index.add_argument("--metadata", default=paths["metadata_parquet"])
     p_index.add_argument("--faiss-output", default=paths["faiss_index_path"])
     p_index.add_argument("--bm25-output", default=paths["bm25_corpus_path"])
@@ -428,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- query (Phase 4, one-shot) ---
     p_query = subparsers.add_parser(
-        "query",
+        "query", parents=[base_parser],
         help="Phase 4: search (--s), search+answer (--q), answer-from-CSV (--qa), "
         "or legacy full-RAG (plain question).",
     )
@@ -481,7 +493,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- trake (Phase 4, sequential sub-moment localization within one video) ---
     p_trake = subparsers.add_parser(
-        "trake",
+        "trake", parents=[base_parser], 
         help="TRAKE: locate N ordered sub-moments of one event inside a single video "
         "(e.g. a jump's takeoff / clearing the bar / landing / standing up).",
     )
@@ -510,14 +522,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_trake.set_defaults(func=cmd_trake)
 
     # --- shell (Phase 4, interactive) ---
-    p_shell = subparsers.add_parser("shell", help="Interactive REPL: load model/index once, ask many questions.")
+    p_shell = subparsers.add_parser("shell", parents=[base_parser], help="Interactive REPL: load model/index once, ask many questions.")
     p_shell.add_argument("--metadata", default=paths["metadata_parquet"])
     p_shell.add_argument("--faiss-index", default=paths["faiss_index_path"])
     p_shell.add_argument("--bm25-index", default=paths["bm25_corpus_path"])
     p_shell.set_defaults(func=cmd_shell)
 
     # --- pipeline (all of Phase 1-3 in one go) ---
-    p_pipeline = subparsers.add_parser("pipeline", help="Run extract -> caption -> index sequentially.")
+    p_pipeline = subparsers.add_parser("pipeline", parents=[base_parser], help="Run extract -> caption -> index sequentially.")
     p_pipeline.add_argument("--videos-dir", default=paths["raw_videos_dir"])
     p_pipeline.add_argument("--video-info-dir", default=paths["video_info_dir"])
     p_pipeline.add_argument("--keyframes-dir", default=paths["keyframes_dir"])
@@ -536,6 +548,29 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if hasattr(args, "wandb") and args.wandb:
+        import wandb
+        print("\n ---Đang thiết lập Weights & Biases...---")
+        
+        # Cấp quyền bằng key người dùng nhập
+        os.environ["WANDB_API_KEY"] = args.wandb.strip()
+        wandb.login()
+        
+        init_kwargs = {
+            "project": args.wandb_project,
+            "name": f"run_{args.command}"
+        }
+        
+        # Logic ghi đè/chạy tiếp
+        if hasattr(args, "wandb_run_id") and args.wandb_run_id:
+            init_kwargs["id"] = args.wandb_run_id
+            init_kwargs["resume"] = "allow"
+            print(f" ---Đang kết nối lại với Run cũ (ID: {args.wandb_run_id}) để ghi tiếp...---")
+        else:
+            print("---Đang tạo một Run mới trên W&B...---")
+            
+        wandb.init(**init_kwargs)
+    
     args.func(args)
 
 
