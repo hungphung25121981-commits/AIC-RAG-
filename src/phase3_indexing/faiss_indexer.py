@@ -66,13 +66,10 @@ def build_faiss_index(
     normalized = normalize_vectors(vectors)
 
     base_index = faiss.IndexFlatIP(embedding_dim)
-    id_index = faiss.IndexIDMap2(base_index)
+    id_index = faiss.IndexIDMap(base_index)
     id_index.add_with_ids(normalized, np.array(segment_ids, dtype=np.int64))
 
     logger.info("Built FAISS IndexFlatIP with %d vectors (dim=%d).", id_index.ntotal, embedding_dim)
-
-    if use_gpu:
-        id_index = _to_gpu_if_available(id_index)
     return id_index
 
 
