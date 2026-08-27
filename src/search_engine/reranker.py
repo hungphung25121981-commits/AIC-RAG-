@@ -88,7 +88,7 @@ def rerank_segments(
             query=query, segments_block=_format_segments_for_rerank(batch)
         )
         raw = engine.generate(text_prompt=prompt, image_paths=None, max_new_tokens=150, temperature=0.0)
-
+        print(f"\n[DEBUG RERANK] Qwen trả lời: {raw}\n")
         try:
             raw_scores = _extract_json_array(raw)
             scores = [float(s) for s in raw_scores]
