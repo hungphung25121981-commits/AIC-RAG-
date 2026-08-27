@@ -179,43 +179,34 @@ class QwenVLEngine:
         chat_text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        # NOTE: this pipeline only ever feeds Qwen2.5-VL still keyframes (never raw
-        # video), so we load images directly with PIL instead of pulling in the
-        # `qwen-vl-utils` package's `process_vision_info`. That package's video
-        # code path unconditionally imports decord/av at module import time, and
-        # those wheels are compiled against an older numpy C-ABI -- on Kaggle's
-        # numpy 2.0.2 base image that raises
-        # `ValueError: numpy.dtype size changed, may indicate binary incompatibility`
-        # before we ever get to use the (unused) video functionality. The
-        # HF Qwen2.5-VL image processor already does its own min/max-pixel smart
-        # resize internally, so nothing is lost by skipping qwen-vl-utils here.
+        
+        # Biến chứa ảnh thực tế ở đây
         image_inputs = _load_images(image_paths)
 
-# Kiểm tra nếu danh sách ảnh có dữ liệu thì mới truyền tham số images
-        if images and len(images) > 0:
+        # Dùng đúng tên biến image_inputs và chat_text
+        if image_inputs and len(image_inputs) > 0:
             inputs = self.processor(
-                text=text_prompt, # Thay bằng đúng tên biến text trong code cũ của bạn
-                images=images,
+                text=[chat_text],
+                images=image_inputs,
+                padding=True,
                 return_tensors="pt"
-                # ... (giữ nguyên các tham số khác nếu code cũ có) ...
             )
         else:
-            # Nếu không có ảnh, bỏ HẲN tham số images đi
             inputs = self.processor(
-                text=text_prompt, # Thay bằng đúng tên biến text trong code cũ của bạn
+                text=[chat_text],
+                padding=True,
                 return_tensors="pt"
-                # ... (giữ nguyên các tham số khác nếu code cũ có) ...
-            ).to(self.model.device)
+            )
+            
+        # Đẩy chung lên GPU cho cả 2 trường hợp
+        inputs = inputs.to(self.model.device)
 
         effective_temperature = temperature if temperature is not None else self.temperature
         gen_kwargs = dict(
             max_new_tokens=max_new_tokens if max_new_tokens is not None else self.max_new_tokens,
             do_sample=effective_temperature > 0,
         )
-        # transformers warns/errors on sampling-only kwargs (temperature, top_p) being set
-        # while do_sample=False (greedy decoding ignores them) -- only include them when
-        # actually sampling, and always resolve 0.0 to greedy instead of silently falling
-        # back to the config default (the original bug this fixes).
+        
         if gen_kwargs["do_sample"]:
             gen_kwargs["temperature"] = effective_temperature
             gen_kwargs["top_p"] = self.top_p
