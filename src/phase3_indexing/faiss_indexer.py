@@ -82,7 +82,7 @@ def save_faiss_index(index: "faiss.Index", output_path: Optional[str | Path] = N
     output_path = Path(output_path or cfg["paths"]["faiss_index_path"])
     ensure_dir(output_path.parent)
 
-   cpu_index = faiss.index_gpu_to_cpu(index) if hasattr(faiss, "index_gpu_to_cpu") and _is_gpu_index(index) else index
+    cpu_index = faiss.index_gpu_to_cpu(index) if hasattr(faiss, "index_gpu_to_cpu") and _is_gpu_index(index) else index
     
     # Khôi phục đúng kiểu dữ liệu (vd: IndexIDMap2) trước khi lưu
     cpu_index = faiss.downcast_index(cpu_index)
