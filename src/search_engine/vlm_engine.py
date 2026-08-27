@@ -191,13 +191,21 @@ class QwenVLEngine:
         # resize internally, so nothing is lost by skipping qwen-vl-utils here.
         image_inputs = _load_images(image_paths)
 
-        inputs = self.processor(
-            text=[chat_text],
-            images=image_inputs,
-            videos=None,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.model.device)
+# Kiểm tra nếu danh sách ảnh có dữ liệu thì mới truyền tham số images
+        if images and len(images) > 0:
+            inputs = self.processor(
+                text=text_prompt, # Thay bằng đúng tên biến text trong code cũ của bạn
+                images=images,
+                return_tensors="pt"
+                # ... (giữ nguyên các tham số khác nếu code cũ có) ...
+            )
+        else:
+            # Nếu không có ảnh, bỏ HẲN tham số images đi
+            inputs = self.processor(
+                text=text_prompt, # Thay bằng đúng tên biến text trong code cũ của bạn
+                return_tensors="pt"
+                # ... (giữ nguyên các tham số khác nếu code cũ có) ...
+            ).to(self.model.device)
 
         effective_temperature = temperature if temperature is not None else self.temperature
         gen_kwargs = dict(
