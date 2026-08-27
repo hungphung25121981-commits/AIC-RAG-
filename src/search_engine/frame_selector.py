@@ -72,7 +72,13 @@ def _load_frame_timestamp_lookup(keyframe_map_csv: str) -> dict:
 def _resolve_keyframe_paths(
     segment: RetrievedSegment, keyframes_dir: str | Path
 ) -> tuple[list[str], list[str]]:
-    frame_ids = list(segment.metadata.get("keyframes_list") or [])
+    k_list = segment.metadata.get("keyframes_list")
+    
+    # Kiểm tra an toàn thay vì dùng chữ "or"
+    if k_list is None:
+        frame_ids = []
+    else:
+        frame_ids = list(k_list)
     frame_paths = [str(Path(keyframes_dir) / f"{fid}.jpg") for fid in frame_ids]
     return frame_paths, frame_ids
 
