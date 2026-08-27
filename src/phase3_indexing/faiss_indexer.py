@@ -47,7 +47,7 @@ def build_faiss_index(
     vectors: np.ndarray,
     segment_ids: list[int],
     embedding_dim: Optional[int] = None,
-    use_gpu: bool = True,
+    use_gpu: bool = False,
 ) -> "faiss.Index":
     """Build an IndexFlatIP wrapped in IndexIDMap2, keyed by explicit segment_id.
 
@@ -77,27 +77,13 @@ def build_faiss_index(
 
 
 def save_faiss_index(index: "faiss.Index", output_path: Optional[str | Path] = None) -> Path:
-    """Persist the FAISS index to disk (always saved as CPU index for portability)."""
+    """Persist the FAISS index to disk."""
     cfg = load_config()
     output_path = Path(output_path or cfg["paths"]["faiss_index_path"])
     ensure_dir(output_path.parent)
 
-    # Ép chuyển về CPU một cách an toàn mà không cần check tên 'Gpu'
-    cpu_index = index
-    if hasattr(faiss, "index_gpu_to_cpu"):
-        try:
-            cpu_index = faiss.index_gpu_to_cpu(index)
-        except Exception as e:
-            logger.warning(f"Không thể index_gpu_to_cpu (có thể index đã ở CPU): {e}")
-            cpu_index = index
-            
-    # Khôi phục định dạng gốc
-    try:
-        cpu_index = faiss.downcast_index(cpu_index)
-    except Exception:
-        pass
-
-    faiss.write_index(cpu_index, str(output_path))
+    # Ghi thẳng index ra ổ đĩa
+    faiss.write_index(index, str(output_path))
     logger.info("Saved FAISS index to %s", output_path)
     return output_path
 
