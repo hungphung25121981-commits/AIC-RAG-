@@ -128,17 +128,18 @@ def embed_images(image_paths: list[str | Path]) -> np.ndarray:
     inputs = processor(images=images, return_tensors="pt").to(device)
 
     with torch.no_grad():
-        image_features = model.get_image_features(**inputs)  # (N, projection_dim), NOT normalized
+        image_features = model.get_image_features(**inputs)  
+        
+        # BÓC LÕI TENSOR RA:
+        if hasattr(image_features, 'image_embeds'):
+            image_features = image_features.image_embeds
+        elif hasattr(image_features, 'pooler_output'):
+            image_features = image_features.pooler_output
+            
     image_features = _l2_normalize(image_features.float())
     return image_features.cpu().numpy().astype(np.float32)
-
-
 def embed_texts(texts: list[str]) -> np.ndarray:
-    """Embed a batch of text queries -> (M, projection_dim) float32, L2-normalized.
-
-    Uses SigLIP's trained-on fixed-length padding (NOT CLIP-style
-    dynamic padding) -- see module docstring point 3.
-    """
+    """Embed a batch of text queries -> (M, projection_dim) float32, L2-normalized."""
     if not texts:
         return np.empty((0, 0), dtype=np.float32)
 
@@ -157,7 +158,14 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     ).to(device)
 
     with torch.no_grad():
-        text_features = model.get_text_features(**inputs)  # (M, projection_dim), NOT normalized
+        text_features = model.get_text_features(**inputs)  
+        
+        # BÓC LÕI TENSOR RA:
+        if hasattr(text_features, 'text_embeds'):
+            text_features = text_features.text_embeds
+        elif hasattr(text_features, 'pooler_output'):
+            text_features = text_features.pooler_output
+
     text_features = _l2_normalize(text_features.float())
     return text_features.cpu().numpy().astype(np.float32)
 
