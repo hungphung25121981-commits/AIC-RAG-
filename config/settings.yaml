@@ -77,7 +77,7 @@ phase2:
   ocr_engine: "rapidocr"        # ONNXRuntime-based -- no numpy-ABI-sensitive compiled
                                  # extensions, so it doesn't break under Kaggle's numpy 2.0.2
                                  # base image the way paddlepaddle-gpu / paddleocr does.
-  ocr_lang: "en"
+  ocr_lang: "vi"
   ocr_use_angle_cls: true
   ocr_min_confidence: 0.55
   ocr_dedupe_iou: 0.5           # drop overlapping duplicate OCR boxes across frames in same segment
