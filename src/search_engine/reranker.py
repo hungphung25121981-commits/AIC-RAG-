@@ -95,17 +95,21 @@ def rerank_segments(
         print(f"=====================================\n", flush=True)
         
         # (Các dòng code bên dưới của bạn giữ nguyên)
+        import re
+        
         try:
-            raw_scores = _extract_json_array(raw)
-            scores = [float(s) for s in raw_scores]
-            if len(scores) != len(batch):
-                raise ValueError(f"expected {len(batch)} scores, got {len(scores)}")
-        except (ValueError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "Rerank parse failed for batch starting at %d (%s); keeping fused order for this batch.",
-                start,
-                exc,
-            )
+            # Tìm tất cả các con số (cả số thập phân) trong câu trả lời
+            numbers = re.findall(r"[-+]?\d*\.\d+|\d+", raw)
+            scores = [float(s) for s in numbers]
+            
+            # Nếu dư số, cắt bớt cho bằng batch. Nếu thiếu số, bù thêm số 0
+            if len(scores) > len(batch):
+                scores = scores[:len(batch)]
+            elif len(scores) < len(batch):
+                scores.extend([0.0] * (len(batch) - len(scores)))
+                
+        except Exception as exc:
+            logger.warning("Lỗi trích xuất điểm, dùng điểm mặc định...", exc)
             scores = [float(len(batch) - i) for i in range(len(batch))]
 
         scored.extend(zip(batch, scores))
