@@ -53,18 +53,11 @@ sentence-transformers>=3.2.1
 FlagEmbedding>=1.3.2       # bge-m3 dense/sparse encoder
 
 # ---- Vector / lexical search ----
-faiss-gpu==1.15.0              # Kaggle T4 image ships CUDA 11.x compatible build
+qdrant-client<=1.7.0             # Kaggle T4 image ships CUDA 11.x compatible build
 rank-bm25==0.2.2
 
 # ---- OCR ----
-# RapidOCR (onnxruntime backend) instead of PaddleOCR: no numpy-ABI-sensitive
-# compiled extension, much lighter install, and no CUDA-matched paddle wheel
-# to get right on Kaggle. onnxruntime-gpu is optional (falls back to CPU,
-# which is plenty fast per-keyframe); swap to onnxruntime-gpu if you want it
-# on the T4s.
-rapidocr-onnxruntime==1.3.24
-onnxruntime==1.19.2
-# onnxruntime-gpu==1.19.2      # uncomment (and remove the CPU line above) to run OCR on GPU
+surya-ocr.=0.6.0
 
 # Optional: only needed if you set phase2.ocr_engine: "paddleocr" in
 # config/settings.yaml on a non-Kaggle machine with numpy<2 pinned.
@@ -87,25 +80,3 @@ pyyaml>=6.0.2
 tqdm>=4.66.5
 python-dotenv>=1.0.1
 
-# ============================================================
-# Kaggle install notes:
-#   1) faiss-gpu wheels on PyPI are CPU-only for py>=3.11 on some
-#      mirrors -- if `import faiss` fails to see the GPU, run:
-#        pip uninstall -y faiss-gpu faiss-cpu
-#        conda install -y -c pytorch -c nvidia faiss-gpu=1.7.2
-#      (Kaggle notebooks have conda available via `!conda`.)
-#   2) OCR runs on RapidOCR (onnxruntime) by default -- no CUDA-matched
-#      wheel to fight with. If `import onnxruntime` can't see the GPU
-#      provider, it silently falls back to CPU, which is fine for
-#      per-keyframe OCR.
-#   3) If Kaggle's preinstalled numpy isn't 1.26.4 when this file is
-#      installed (`import numpy; numpy.__version__` -- check first),
-#      pip will try to downgrade it to satisfy the pin below. That's
-#      normally fine, but if any *other* preinstalled Kaggle package
-#      was compiled against numpy 2.x specifically, downgrading numpy
-#      can itself trigger a fresh ABI mismatch elsewhere. If you hit
-#      that, either drop the numpy==1.26.4 pin and let pip resolve a
-#      version compatible with everything already in the image, or
-#      restart the Kaggle kernel after installing so nothing has been
-#      imported yet against the old numpy.
-# ============================================================

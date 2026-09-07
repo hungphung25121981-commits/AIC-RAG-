@@ -11,8 +11,7 @@ paths:
   keyframes_dir: "data/keyframes"
   keyframe_map_csv: "data/keyframe_map.csv"
   metadata_parquet: "data/metadata.parquet"
-  faiss_index_path: "data/index/video_faiss.index"
-  bm25_corpus_path: "data/index/bm25_corpus.pkl"
+  qdrant_db_path:  "data/index/qdrant_storage"
   id_map_path: "data/index/segment_id_map.pkl"
   logs_dir: "logs"
 
@@ -74,7 +73,7 @@ phase2:
   vlm_lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
 
   # ---- OCR (Phase 2 caption source -- see note above) ----
-  ocr_engine: "rapidocr"        # ONNXRuntime-based -- no numpy-ABI-sensitive compiled
+  ocr_engine: "SuryaOCREngine"        # ONNXRuntime-based -- no numpy-ABI-sensitive compiled
                                  # extensions, so it doesn't break under Kaggle's numpy 2.0.2
                                  # base image the way paddlepaddle-gpu / paddleocr does.
   ocr_lang: "vi"
@@ -88,11 +87,11 @@ phase2:
   caption_empty_fallback: "No on-screen text detected in this segment."
 
   # ---- SigLIP: fast visual-text similarity for frame_selector.py (replaces the old CLIP-ViT-B/32 slot) ----
-  siglip_model_id: "google/siglip-base-patch16-224"
+  siglip_model_id: "google/siglip2-so400m-patch14-naflex"
   # SigLIP projects BOTH image and text to this same dimension (must match for the dot-product
   # similarity in visual_embedder.py to be valid -- verified against model.config.projection_dim
   # at load time; a mismatch raises rather than silently producing wrong scores).
-  siglip_embedding_dim: 768
+  siglip_embedding_dim: 1152
   # SigLIP was trained with FIXED-length text padding (unlike CLIP's dynamic padding) -- 64 tokens
   # is the value used by every official google/siglip-* checkpoint's processor config.
   siglip_text_max_length: 64
@@ -108,8 +107,7 @@ phase3:
   embedding_dim: 1024
   embedding_batch_size: 16
   embedding_max_length: 512
-  embedding_normalize: true      # required for IndexFlatIP == cosine similarity
-  faiss_index_type: "IndexFlatIP"
+  embedding_normalize: true      
   bm25_k1: 1.5
   bm25_b: 0.75
   bm25_tokenizer: "simple_lower_split"  # see bm25_indexer.py

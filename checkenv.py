@@ -19,10 +19,9 @@ PACKAGES = [
     ("safetensors", "SafeTensors"),
     ("sentence_transformers", "SentenceTransformers"),
     ("FlagEmbedding", "FlagEmbedding"),
-    ("faiss", "FAISS"),
+    ("qdrant_client", "Qdrant Client"),    # Thay thế cho FAISS
     ("rank_bm25", "Rank BM25"),
-    ("rapidocr_onnxruntime", "RapidOCR"),
-    ("onnxruntime", "ONNX Runtime"),
+    ("surya", "Surya OCR"),                # Thay thế cho RapidOCR & ONNX
     ("cv2", "OpenCV"),
     ("scenedetect", "PySceneDetect"),
     ("skimage", "Scikit-Image"),

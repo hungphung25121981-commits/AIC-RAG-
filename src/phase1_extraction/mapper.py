@@ -5,18 +5,18 @@ Combines PySceneDetect boundaries with a target segment window
   - segments never straddle a hard scene cut where avoidable
   - segments stay within the configured min/max duration
   - every kept keyframe (post-SSIM-filter) is assigned a contiguous
-    integer segment_id per video, matching the FAISS row requirement
-    downstream (segment_id 0..N-1 contiguous, enforced in Phase 3).
+    integer segment_id per video.
+    
+NOTE: Qdrant supports UUIDs and 64-bit integers. We use contiguous 
+integers here for clean metadata management and downstream mapping.
 
 Output schema (keyframe_map.csv):
     frame_id (str), video_id (str), timestamp_sec (float), segment_id (int)
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Optional
-
 import pandas as pd
 
 from src.phase1_extraction.scene_detect import detect_scenes
@@ -24,7 +24,6 @@ from src.phase1_extraction.ssim_filter import filter_near_duplicate_frames, save
 from src.utils_common import ensure_dir, get_logger, load_config
 
 logger = get_logger(__name__)
-
 
 def _windows_from_scenes(
     scene_boundaries: list[tuple[float, float]],
@@ -49,21 +48,13 @@ def _windows_from_scenes(
             cursor = chunk_end
     return windows
 
-
 def build_keyframe_map_for_video(
     video_path: str | Path,
     video_id: str,
     keyframes_output_dir: str | Path,
     sample_fps: float = 2.0,
 ) -> pd.DataFrame:
-    """Run SSIM filtering + scene detection + windowing for one video.
-
-    Returns a per-video DataFrame with columns:
-        frame_id, video_id, timestamp_sec, segment_id
-    (segment_id is contiguous 0..N-1 *within this video*; the caller /
-    metadata_builder is responsible for making it globally contiguous
-    across the whole corpus before FAISS indexing.)
-    """
+    """Run SSIM filtering + scene detection + windowing for one video."""
     cfg = load_config()
     p1 = cfg["phase1"]
 
@@ -111,16 +102,13 @@ def build_keyframe_map_for_video(
     )
     return df
 
-
 def _assign_window_id(timestamp_sec: float, windows: list[tuple[float, float]]) -> int:
     for idx, (start, end) in enumerate(windows):
         if start <= timestamp_sec < end:
             return idx
     return max(len(windows) - 1, 0)
 
-
 def _cap_frames_per_segment(df: pd.DataFrame, max_per_segment: int) -> pd.DataFrame:
-    """Evenly subsample if a segment has more keyframes than allowed."""
     parts = []
     for _, group in df.groupby("segment_id", sort=True):
         if len(group) > max_per_segment:
@@ -130,27 +118,17 @@ def _cap_frames_per_segment(df: pd.DataFrame, max_per_segment: int) -> pd.DataFr
         parts.append(group)
     return pd.concat(parts).reset_index(drop=True)
 
-
 def _renumber_segments_contiguously(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure segment_id is contiguous 0..N-1 within this video after any drops."""
     unique_ids = sorted(df["segment_id"].unique())
     remap = {old: new for new, old in enumerate(unique_ids)}
     df = df.copy()
     df["segment_id"] = df["segment_id"].map(remap)
     return df
 
-
 def build_corpus_keyframe_map(
     video_specs: list[dict],
     output_csv: Optional[str | Path] = None,
 ) -> pd.DataFrame:
-    """Run build_keyframe_map_for_video across many videos and write keyframe_map.csv.
-
-    video_specs: list of {"video_path": ..., "video_id": ..., "keyframes_output_dir": ...}
-    NOTE: segment_id here stays PER-VIDEO contiguous; metadata_builder.py
-    is responsible for creating the GLOBAL contiguous segment_id used by
-    FAISS (video_id, local_segment_id) -> global segment_id.
-    """
     cfg = load_config()
     output_csv = output_csv or cfg["paths"]["keyframe_map_csv"]
 

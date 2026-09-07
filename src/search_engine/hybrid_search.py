@@ -1,10 +1,8 @@
-"""Hybrid dense (FAISS) + sparse (BM25) search with Reciprocal Rank Fusion.
+﻿"""Hybrid search wrapper for Qdrant.
 
-RRF is used instead of naive score-averaging because dense cosine
-similarity and BM25 scores live on incompatible scales; RRF only needs
-each list's RANK, making fusion scale-free and robust.
-
-    RRF(segment) = sum over each ranker r of  1 / (rrf_k + rank_r(segment))
+This module now acts as a thin adapter between the Qdrant native hybrid 
+search (which handles Dense + Sparse + RRF internally) and the rest of 
+the pipeline which expects `RetrievedSegment` objects.
 """
 
 from __future__ import annotations
@@ -12,12 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 
-from src.phase3_indexing.bm25_indexer import BM25Corpus
-from src.phase3_indexing.embedder import embed_texts
-from src.phase3_indexing.faiss_indexer import search_faiss_index
+from src.phase3_indexing.Qdrant_index import search_qdrant_hybrid
 from src.utils_common import get_logger, load_config
 
 logger = get_logger(__name__)
@@ -34,91 +29,56 @@ class RetrievedSegment:
     metadata: dict = field(default_factory=dict)
 
 
-def reciprocal_rank_fusion(
-    dense_results: list[tuple[int, float]],
-    sparse_results: list[tuple[int, float]],
-    rrf_k: int,
-) -> dict[int, dict]:
-    """Fuse two ranked (segment_id, score) lists into per-segment fused stats."""
-    fused: dict[int, dict] = {}
-
-    for rank, (seg_id, score) in enumerate(dense_results, start=1):
-        entry = fused.setdefault(seg_id, {"rrf": 0.0})
-        entry["rrf"] += 1.0 / (rrf_k + rank)
-        entry["dense_score"] = score
-        entry["dense_rank"] = rank
-
-    for rank, (seg_id, score) in enumerate(sparse_results, start=1):
-        entry = fused.setdefault(seg_id, {"rrf": 0.0})
-        entry["rrf"] += 1.0 / (rrf_k + rank)
-        entry["sparse_score"] = score
-        entry["sparse_rank"] = rank
-
-    return fused
-
-
 def hybrid_search(
     query: str,
-    faiss_index,
-    bm25_corpus: BM25Corpus,
-    metadata_df: pd.DataFrame,
-    dense_top_k: Optional[int] = None,
-    sparse_top_k: Optional[int] = None,
-    rrf_k: Optional[int] = None,
+    faiss_index=None,     # Kept for backward compatibility with CLI, ignored
+    bm25_corpus=None,     # Kept for backward compatibility with CLI, ignored
+    metadata_df: pd.DataFrame = None,
+    dense_top_k: Optional[int] = None,   # Ignored by Qdrant (handled by limit/prefetch)
+    sparse_top_k: Optional[int] = None,  # Ignored by Qdrant 
+    rrf_k: Optional[int] = None,         # Ignored by Qdrant (native RRF used)
     final_top_k: Optional[int] = None,
     min_relevance_score: Optional[float] = None,
 ) -> list[RetrievedSegment]:
-    """Run FAISS + BM25 retrieval for `query`, fuse with RRF, attach metadata.
-
-    Returns segments sorted by fused_score descending, truncated to final_top_k
-    and filtered by min_relevance_score.
-    """
+    """Run Qdrant Hybrid Search and format the output as RetrievedSegment."""
+    
     cfg = load_config()
     p4 = cfg["phase4"]
-    dense_top_k = dense_top_k or p4["dense_top_k"]
-    sparse_top_k = sparse_top_k or p4["sparse_top_k"]
-    rrf_k = rrf_k or p4["rrf_k"]
     final_top_k = final_top_k or p4["final_top_k"]
     min_relevance_score = (
         min_relevance_score if min_relevance_score is not None else p4["min_relevance_score"]
     )
 
-    query_vector = embed_texts([query])[0]
-    dense_results = search_faiss_index(faiss_index, np.asarray(query_vector), top_k=dense_top_k)
-    sparse_results = bm25_corpus.search(query, top_k=sparse_top_k)
+    # 1. Gọi thẳng hàm của Qdrant (bỏ qua faiss và bm25)
+    raw_results = search_qdrant_hybrid(query=query, top_k=final_top_k)
+    
+    # 2. Tạo lookup dictionary để ghép metadata
+    if metadata_df is not None:
+        metadata_lookup = metadata_df.set_index("segment_id").to_dict(orient="index")
+    else:
+        metadata_lookup = {}
 
-    fused = reciprocal_rank_fusion(dense_results, sparse_results, rrf_k=rrf_k)
-
-    # Normalize fused RRF scores to [0, 1] for interpretable min_relevance_score filtering.
-    max_possible = (1.0 / (rrf_k + 1)) * 2  # both rankers rank it #1
-    metadata_lookup = metadata_df.set_index("segment_id").to_dict(orient="index")
-
+    # 3. Đóng gói kết quả
     scored: list[RetrievedSegment] = []
-    for seg_id, stats in fused.items():
-        normalized_score = stats["rrf"] / max_possible if max_possible > 0 else 0.0
-        if normalized_score < min_relevance_score:
+    for seg_id, score in raw_results:
+        # Qdrant's RRF score is not normalized to [0,1], but we still apply the threshold
+        if score < min_relevance_score:
             continue
+            
         scored.append(
             RetrievedSegment(
                 segment_id=seg_id,
-                fused_score=normalized_score,
-                dense_score=stats.get("dense_score"),
-                dense_rank=stats.get("dense_rank"),
-                sparse_score=stats.get("sparse_score"),
-                sparse_rank=stats.get("sparse_rank"),
+                fused_score=float(score),
                 metadata=metadata_lookup.get(seg_id, {}),
             )
         )
 
+    # Sort again just to be safe, though Qdrant returns them sorted
     scored.sort(key=lambda r: r.fused_score, reverse=True)
-    top_results = scored[:final_top_k]
 
     logger.info(
-        "hybrid_search(%r): dense=%d sparse=%d fused=%d -> returning top %d",
+        "qdrant_hybrid_search(%r): returned top %d segments",
         query[:60],
-        len(dense_results),
-        len(sparse_results),
         len(scored),
-        len(top_results),
     )
-    return top_results
+    return scored
