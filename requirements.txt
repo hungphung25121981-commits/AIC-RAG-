@@ -57,7 +57,7 @@ qdrant-client<=1.7.0             # Kaggle T4 image ships CUDA 11.x compatible bu
 rank-bm25==0.2.2
 
 # ---- OCR ----
-surya-ocr.=0.6.0
+surya-ocr>=0.6.0
 
 # Optional: only needed if you set phase2.ocr_engine: "paddleocr" in
 # config/settings.yaml on a non-Kaggle machine with numpy<2 pinned.
