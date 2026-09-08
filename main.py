@@ -101,16 +101,31 @@ def cmd_extract(args: argparse.Namespace) -> None:
 # ----------------------------------------------------------------------
 # Phase 2: caption
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Phase 2: caption
+# ----------------------------------------------------------------------
 def cmd_caption(args: argparse.Namespace) -> None:
     from src.phase2_captioning.metadata_builder import build_corpus_metadata
+    # Thêm import cho hệ thống API mới của Surya 0.6.0
+    from surya.inference import SuryaInferenceManager
+    from surya.recognition import RecognitionPredictor
 
-    logger.info("Phase 2: running OCR (visual_caption is built directly from OCR text, no VLM call)...")
+    logger.info("Phase 2: running OCR (Khởi tạo Surya 0.6.0 Inference Manager để quản lý memory)...")
+    
+    # 1. Khởi tạo inference manager và model ở main để load 1 lần duy nhất
+    manager = SuryaInferenceManager()
+    recognition_predictor = RecognitionPredictor(manager)
+
+    logger.info("Bắt đầu build metadata với model OCR đã load...")
+    # 2. Truyền predictor trực tiếp xuống pipeline bên dưới
     build_corpus_metadata(
         keyframe_map_csv=args.keyframe_map,
         video_info_dir=args.video_info_dir,
         keyframes_dir=args.keyframes_dir,
         output_parquet=args.output_parquet,
+        ocr_predictor=recognition_predictor  # <--- Bạn truyền thêm tham số này
     )
+    
     free_gpu_memory()
     logger.info("Phase 2 complete.")
 

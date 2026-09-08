@@ -1,35 +1,22 @@
-"""OCR wrapper for on-screen text / table / UI-label extraction using Surya OCR.
-
-This module replaces RapidOCR/PaddleOCR with Surya OCR. Surya provides superior
-layout detection and reading order parsing, which is critical for complex RAG
-documents.
-
-The engine uses two parallel models (Detection and Recognition) initialized lazily
-via `_get_ocr_engine()` to conserve VRAM.
-"""
+"""OCR wrapper for on-screen text / table / UI-label extraction using Surya OCR."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from PIL import Image
-from surya.ocr import run_ocr
-from surya.model.detection.model import load_model as load_det_model, load_processor as load_det_processor
-from surya.model.recognition.model import load_model as load_rec_model
-from surya.model.recognition.processor import load_processor as load_rec_processor
-
+# --- IMPORT MỚI CHO SURYA 0.6.0 ---
+from surya.inference import SuryaInferenceManager
+from surya.recognition import RecognitionPredictor
 from src.utils_common import get_logger, load_config
 
 logger = get_logger(__name__)
 
-# Lazy-loaded Surya engine instances
-_SURYA_DET_MODEL = None
-_SURYA_DET_PROCESSOR = None
-_SURYA_REC_MODEL = None
-_SURYA_REC_PROCESSOR = None
-
+# Quản lý Inference và Predictor cho bản mới
+_SURYA_MANAGER = None
+_SURYA_PREDICTOR = None
 
 @dataclass
 class OCRBox:
@@ -37,32 +24,30 @@ class OCRBox:
     confidence: float
     bbox: list[tuple[float, float]]  # 4 (x, y) corner points
 
+def _get_ocr_predictor():
+    """Lazily load and return the Surya 0.6.0 RecognitionPredictor."""
+    global _SURYA_MANAGER, _SURYA_PREDICTOR
 
-def _get_ocr_engine():
-    """Lazily load and return the Surya Detection and Recognition pipelines."""
-    global _SURYA_DET_MODEL, _SURYA_DET_PROCESSOR, _SURYA_REC_MODEL, _SURYA_REC_PROCESSOR
+    if _SURYA_PREDICTOR is not None:
+        return _SURYA_PREDICTOR
 
-    if _SURYA_DET_MODEL is not None:
-        return _SURYA_DET_MODEL, _SURYA_DET_PROCESSOR, _SURYA_REC_MODEL, _SURYA_REC_PROCESSOR
+    logger.info("Initializing Surya 0.6.0 Inference Manager and Predictor...")
+    _SURYA_MANAGER = SuryaInferenceManager()
+    _SURYA_PREDICTOR = RecognitionPredictor(_SURYA_MANAGER)
+    return _SURYA_PREDICTOR
 
-    logger.info("Initializing Surya OCR Detection Model...")
-    _SURYA_DET_PROCESSOR = load_det_processor()
-    _SURYA_DET_MODEL = load_det_model()
-
-    logger.info("Initializing Surya OCR Recognition Model...")
-    _SURYA_REC_PROCESSOR = load_rec_processor()
-    _SURYA_REC_MODEL = load_rec_model()
-
-    return _SURYA_DET_MODEL, _SURYA_DET_PROCESSOR, _SURYA_REC_MODEL, _SURYA_REC_PROCESSOR
-
-
-def run_ocr_on_image(image_path: str | Path, min_confidence: Optional[float] = None) -> list[OCRBox]:
+def run_ocr_on_image(
+    image_path: str | Path, 
+    min_confidence: Optional[float] = None,
+    predictor: Optional[Any] = None
+) -> list[OCRBox]:
     """Run Surya OCR on a single keyframe image, filtered by confidence."""
     cfg = load_config()
     min_conf = min_confidence if min_confidence is not None else cfg["phase2"]["ocr_min_confidence"]
     langs = [cfg["phase2"].get("ocr_lang", "vi")]
 
-    det_model, det_processor, rec_model, rec_processor = _get_ocr_engine()
+    # Sử dụng predictor truyền vào từ main.py, nếu không có thì lazy-load
+    actual_predictor = predictor if predictor else _get_ocr_predictor()
     boxes: list[OCRBox] = []
 
     try:
@@ -71,32 +56,35 @@ def run_ocr_on_image(image_path: str | Path, min_confidence: Optional[float] = N
         logger.error(f"Failed to open image {image_path}: {e}")
         return boxes
 
-    # Surya batch process (1 image per batch here)
-    predictions = run_ocr(
-        [image], 
-        [langs], 
-        det_model, 
-        det_processor, 
-        rec_model, 
-        rec_processor
-    )
+    # Khởi chạy OCR qua RecognitionPredictor của Surya 0.6.0
+    try:
+        predictions = actual_predictor([image], langs=[langs])
+    except TypeError:
+        # Dự phòng trường hợp tham số cấu hình API có khác biệt
+        predictions = actual_predictor([image])
     
-    if not predictions or not predictions[0].text_lines:
+    if not predictions:
         return boxes
 
-    # Extract bounding box and text
-    for line in predictions[0].text_lines:
-        # Surya returns confidence per line if available, otherwise default to 1.0 for valid text
-        score = getattr(line, "confidence", 1.0) 
-        if score >= min_conf and line.text.strip():
+    # Tùy theo object trả về là blocks (layout) hay text_lines (recognition)
+    result_items = getattr(predictions[0], 'text_lines', None) or getattr(predictions[0], 'blocks', [])
+
+    if not result_items:
+        return boxes
+
+    for item in result_items:
+        score = getattr(item, "confidence", 1.0) 
+        text = getattr(item, "text", "").strip()
+        polygon = getattr(item, "polygon", [])
+        
+        if score >= min_conf and text:
             boxes.append(OCRBox(
-                text=line.text.strip(), 
+                text=text, 
                 confidence=float(score), 
-                bbox=line.polygon
+                bbox=polygon
             ))
 
     return boxes
-
 
 def _iou(box_a: list[tuple[float, float]], box_b: list[tuple[float, float]]) -> float:
     """Approximate IoU between two quadrilateral boxes via their axis-aligned bounds."""
@@ -117,11 +105,11 @@ def _iou(box_a: list[tuple[float, float]], box_b: list[tuple[float, float]]) -> 
     area_b = (bx2 - bx1) * (by2 - by1)
     return inter_area / float(area_a + area_b - inter_area)
 
-
 def extract_segment_ocr_text(
     keyframe_paths: list[str | Path],
     dedupe_iou: Optional[float] = None,
     min_confidence: Optional[float] = None,
+    predictor: Optional[Any] = None,
 ) -> str:
     """Run OCR across all keyframes in a segment and return de-duplicated joined text."""
     cfg = load_config()
@@ -132,7 +120,7 @@ def extract_segment_ocr_text(
 
     for path in keyframe_paths:
         try:
-            boxes = run_ocr_on_image(path, min_confidence=min_confidence)
+            boxes = run_ocr_on_image(path, min_confidence=min_confidence, predictor=predictor)
         except Exception as exc:
             logger.warning("OCR failed on %s: %s", path, exc)
             continue
@@ -148,7 +136,6 @@ def extract_segment_ocr_text(
                 seen_texts.append(box.text)
 
     return " | ".join(seen_texts)
-
 
 def build_caption_from_ocr(
     ocr_text: str,
@@ -178,15 +165,15 @@ def build_caption_from_ocr(
         caption = caption[: max_chars - 1].rstrip() + "…"
     return caption
 
-
 def build_segment_caption(
     keyframe_paths: list[str | Path],
     dedupe_iou: Optional[float] = None,
     min_confidence: Optional[float] = None,
+    predictor: Optional[Any] = None,
 ) -> tuple[str, str]:
     """Convenience wrapper: run OCR once for a segment and return BOTH `(ocr_screen_text, visual_caption)`."""
     ocr_text = extract_segment_ocr_text(
-        keyframe_paths, dedupe_iou=dedupe_iou, min_confidence=min_confidence
+        keyframe_paths, dedupe_iou=dedupe_iou, min_confidence=min_confidence, predictor=predictor
     )
     caption = build_caption_from_ocr(ocr_text)
     return ocr_text, caption
