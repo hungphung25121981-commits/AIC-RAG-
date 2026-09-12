@@ -31,6 +31,17 @@ def _get_embedder():
     return _EMBEDDER_SINGLETON
 
 
+def get_shared_bge_m3_model():
+    """Public accessor for the cached BGE-M3 model instance.
+
+    Qdrant_index.py's sparse-vector extraction reuses THIS SAME loaded model
+    (BGE-M3 natively returns dense + sparse in one `encode()` call) instead of
+    instantiating a second ~2.2GB BGEM3FlagModel of its own on every row/query,
+    which was previously reloading the full checkpoint per segment during indexing.
+    """
+    return _get_embedder()
+
+
 def embed_texts(
     texts: list[str],
     batch_size: Optional[int] = None,

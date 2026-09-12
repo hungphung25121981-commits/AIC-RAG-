@@ -53,11 +53,25 @@ sentence-transformers>=3.2.1
 FlagEmbedding>=1.3.2       # bge-m3 dense/sparse encoder
 
 # ---- Vector / lexical search ----
-qdrant-client<=1.7.0             # Kaggle T4 image ships CUDA 11.x compatible build
+qdrant-client>=1.10.1,<2.0.0      # qdrant-client is pure-Python (no CUDA dep -- the old
+                                  # <=1.7.0 pin was based on a false assumption). Qdrant_index.py
+                                  # uses client.query_points()/models.Prefetch/models.FusionQuery
+                                  # (the "Universal Query API" for native RRF fusion), which only
+                                  # exists from 1.10.0 onward. <=1.7.0 does not have query_points
+                                  # at all and will raise AttributeError on import-time usage.
 rank-bm25==0.2.2
 
 # ---- OCR ----
-surya-ocr>=0.6.0
+surya-ocr>=0.14.0,<0.20.0
+# IMPORTANT: DO NOT bump to >=0.20.0 ("Surya 2"). From that release, OCR/layout/table-rec
+# run through a VLM that SuryaInferenceManager must serve via `vllm` (needs Docker + the
+# NVIDIA Container Toolkit) or `llama.cpp` (CPU/Apple Silicon). Kaggle notebook containers
+# cannot start Docker (no dockerd/privileged access), so v2 cannot run there at all -- you'd
+# get a hang or a connection-refused error the first time RecognitionPredictor() is called.
+# v1 (this pin) uses FoundationPredictor + RecognitionPredictor + DetectionPredictor, which
+# are plain torch modules loaded in-process -- no server, no Docker, works fine on T4.
+# (Bonus: Surya 2's own benchmark also reports Vietnamese at only ~73% pass rate, so v1 is
+# not even a straight downgrade in practice for this project's `vi` OCR use case.)
 
 # Optional: only needed if you set phase2.ocr_engine: "paddleocr" in
 # config/settings.yaml on a non-Kaggle machine with numpy<2 pinned.

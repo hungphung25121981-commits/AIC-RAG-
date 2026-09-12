@@ -7,16 +7,23 @@ from pathlib import Path
 from typing import Optional, Any
 
 from PIL import Image
-# --- IMPORT MỚI CHO SURYA 0.6.0 ---
-from surya.inference import SuryaInferenceManager
+# --- Surya v1 API (pure PyTorch, no inference server / no Docker needed). ---
+# DO NOT switch to `from surya.inference import SuryaInferenceManager` (Surya >=0.20,
+# "Surya 2"): that API needs SuryaInferenceManager to spawn a vllm server in Docker
+# (GPU) or a llama.cpp server (CPU/Mac) on first call, which Kaggle kernels cannot do
+# (no dockerd / no privileged containers available there). See requirements.txt.
+from surya.foundation import FoundationPredictor
 from surya.recognition import RecognitionPredictor
+from surya.detection import DetectionPredictor
 from src.utils_common import get_logger, load_config
 
 logger = get_logger(__name__)
 
-# Quản lý Inference và Predictor cho bản mới
-_SURYA_MANAGER = None
-_SURYA_PREDICTOR = None
+# Module-level singletons so weights are loaded once per process, shared across
+# every call (both the CLI's `--select-frame`/`query` paths and Phase 2 batch OCR).
+_FOUNDATION_PREDICTOR = None
+_RECOGNITION_PREDICTOR = None
+_DETECTION_PREDICTOR = None
 
 @dataclass
 class OCRBox:
@@ -24,30 +31,40 @@ class OCRBox:
     confidence: float
     bbox: list[tuple[float, float]]  # 4 (x, y) corner points
 
-def _get_ocr_predictor():
-    """Lazily load and return the Surya 0.6.0 RecognitionPredictor."""
-    global _SURYA_MANAGER, _SURYA_PREDICTOR
+def _get_ocr_predictor() -> tuple[Any, Any]:
+    """Lazily load and return (recognition_predictor, detection_predictor).
 
-    if _SURYA_PREDICTOR is not None:
-        return _SURYA_PREDICTOR
+    Pure-torch Surya v1 predictors -- no inference server, no Docker required,
+    safe to run inside a Kaggle notebook kernel.
+    """
+    global _FOUNDATION_PREDICTOR, _RECOGNITION_PREDICTOR, _DETECTION_PREDICTOR
 
-    logger.info("Initializing Surya 0.6.0 Inference Manager and Predictor...")
-    _SURYA_MANAGER = SuryaInferenceManager()
-    _SURYA_PREDICTOR = RecognitionPredictor(_SURYA_MANAGER)
-    return _SURYA_PREDICTOR
+    if _RECOGNITION_PREDICTOR is not None and _DETECTION_PREDICTOR is not None:
+        return _RECOGNITION_PREDICTOR, _DETECTION_PREDICTOR
+
+    logger.info("Loading Surya v1 OCR models (FoundationPredictor + RecognitionPredictor + DetectionPredictor)...")
+    _FOUNDATION_PREDICTOR = FoundationPredictor()
+    _RECOGNITION_PREDICTOR = RecognitionPredictor(_FOUNDATION_PREDICTOR)
+    _DETECTION_PREDICTOR = DetectionPredictor()
+    return _RECOGNITION_PREDICTOR, _DETECTION_PREDICTOR
 
 def run_ocr_on_image(
-    image_path: str | Path, 
+    image_path: str | Path,
     min_confidence: Optional[float] = None,
-    predictor: Optional[Any] = None
+    predictor: Optional[tuple[Any, Any]] = None,
 ) -> list[OCRBox]:
-    """Run Surya OCR on a single keyframe image, filtered by confidence."""
+    """Run Surya OCR on a single keyframe image, filtered by confidence.
+
+    `predictor`, if given, must be the `(recognition_predictor, detection_predictor)`
+    tuple returned by `_get_ocr_predictor()` -- Surya v1's RecognitionPredictor needs a
+    DetectionPredictor passed in explicitly (it no longer bundles one, and there's no
+    "langs" hint anymore -- v1 detection/recognition are language-agnostic).
+    """
     cfg = load_config()
     min_conf = min_confidence if min_confidence is not None else cfg["phase2"]["ocr_min_confidence"]
-    langs = [cfg["phase2"].get("ocr_lang", "vi")]
 
-    # Sử dụng predictor truyền vào từ main.py, nếu không có thì lazy-load
-    actual_predictor = predictor if predictor else _get_ocr_predictor()
+    # Dùng predictor truyền vào từ main.py (đã load 1 lần), nếu không có thì lazy-load singleton
+    recognition_predictor, detection_predictor = predictor if predictor else _get_ocr_predictor()
     boxes: list[OCRBox] = []
 
     try:
@@ -56,18 +73,14 @@ def run_ocr_on_image(
         logger.error(f"Failed to open image {image_path}: {e}")
         return boxes
 
-    # Khởi chạy OCR qua RecognitionPredictor của Surya 0.6.0
-    try:
-        predictions = actual_predictor([image], langs=[langs])
-    except TypeError:
-        # Dự phòng trường hợp tham số cấu hình API có khác biệt
-        predictions = actual_predictor([image])
-    
+    # Surya v1: pure-torch call, no inference server involved.
+    predictions = recognition_predictor([image], det_predictor=detection_predictor)
+
     if not predictions:
         return boxes
 
-    # Tùy theo object trả về là blocks (layout) hay text_lines (recognition)
-    result_items = getattr(predictions[0], 'text_lines', None) or getattr(predictions[0], 'blocks', [])
+    # v1 schema: OCRResult.text_lines -> List[TextLine] (.text / .confidence / .polygon)
+    result_items = getattr(predictions[0], "text_lines", None) or []
 
     if not result_items:
         return boxes

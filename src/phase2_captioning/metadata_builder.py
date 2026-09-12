@@ -75,6 +75,7 @@ def build_metadata_for_video(
     video_info_path: str | Path,
     keyframes_dir: str | Path,
     global_segment_id_offset: int = 0,
+    ocr_predictor: Optional[Any] = None,
 ) -> pd.DataFrame:
     """Build metadata rows for one video's segments.
 
@@ -102,7 +103,7 @@ def build_metadata_for_video(
         end_time = float(seg_frames["timestamp_sec"].max())
 
         try:
-            ocr_text, visual_caption = build_segment_caption(keyframe_paths)
+            ocr_text, visual_caption = build_segment_caption(keyframe_paths, predictor=ocr_predictor)
         except Exception as exc:  # noqa: BLE001 - keep pipeline alive on a single bad segment
             logger.error("OCR caption building failed for %s seg %d: %s", video_id, local_seg_id, exc)
             ocr_text, visual_caption = "", ""
@@ -136,6 +137,7 @@ def build_corpus_metadata(
     video_info_dir: Optional[str | Path] = None,
     keyframes_dir: Optional[str | Path] = None,
     output_parquet: Optional[str | Path] = None,
+    ocr_predictor: Optional[Any] = None,
 ) -> pd.DataFrame:
     """End-to-end Phase 2 driver: keyframe_map.csv -> metadata.parquet.
 
@@ -161,6 +163,7 @@ def build_corpus_metadata(
             video_info_path=video_info_path,
             keyframes_dir=keyframes_dir,
             global_segment_id_offset=running_offset,
+            ocr_predictor=ocr_predictor,
         )
         if not video_df.empty:
             all_dfs.append(video_df)

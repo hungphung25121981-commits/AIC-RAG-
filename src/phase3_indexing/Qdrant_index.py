@@ -19,8 +19,8 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import Distance, VectorParams
 
 from src.utils_common import ensure_dir, get_logger, load_config
-# Import BGE-M3 embedder for dense vectors
-from src.phase3_indexing.embedder import embed_texts
+# Import BGE-M3 embedder for dense vectors (and the shared model instance for sparse too)
+from src.phase3_indexing.embedder import embed_texts, get_shared_bge_m3_model
 
 logger = get_logger(__name__)
 
@@ -58,26 +58,46 @@ def _init_qdrant_collection(client: QdrantClient, embedding_dim: int) -> None:
     logger.info(f"Created Qdrant Hybrid collection (Dense dim={embedding_dim} + Sparse)")
 
 
-def _extract_sparse_vector(text: str) -> models.SparseVector:
+def _extract_sparse_vectors(texts: list[str], batch_size: Optional[int] = None) -> list[models.SparseVector]:
     """
-    Generate sparse vector for Qdrant. 
-    In a real production system, you'd use a dedicated Sparse Encoder 
-    (like SPLADE or BGE-M3's sparse output). Here we use BGE-M3's sparse 
+    Generate sparse vectors for Qdrant, batched.
+
+    In a real production system, you'd use a dedicated Sparse Encoder
+    (like SPLADE or BGE-M3's sparse output). Here we use BGE-M3's sparse
     token weights to directly replace rank_bm25.
+
+    IMPORTANT: reuses the SAME cached BGE-M3 instance as the dense embedder
+    (`embedder.get_shared_bge_m3_model()`) instead of constructing a brand-new
+    ~2.2GB BGEM3FlagModel per call -- the previous per-text instantiation made
+    indexing (and every single query at search time) reload the full checkpoint
+    from disk/HF cache on every row, which is catastrophically slow and can OOM
+    a T4 under repeated loads.
     """
-    from FlagEmbedding import BGEM3FlagModel
+    if not texts:
+        return []
     cfg = load_config()
-    model_id = cfg["phase3"]["embedding_model_id"]
-    
-    # Lấy Sparse Vector trực tiếp từ BGE-M3 (không cần rank_bm25 nữa)
-    model = BGEM3FlagModel(model_id, use_fp16=True)
-    output = model.encode([text], return_dense=False, return_sparse=True)
-    
-    sparse_dict = output["lexical_weights"][0]
-    indices = [int(k) for k in sparse_dict.keys()]
-    values = [float(v) for v in sparse_dict.values()]
-    
-    return models.SparseVector(indices=indices, values=values)
+    batch_size = batch_size or cfg["phase3"]["embedding_batch_size"]
+
+    model = get_shared_bge_m3_model()
+    output = model.encode(
+        texts,
+        batch_size=batch_size,
+        return_dense=False,
+        return_sparse=True,
+        return_colbert_vecs=False,
+    )
+
+    sparse_vectors: list[models.SparseVector] = []
+    for sparse_dict in output["lexical_weights"]:
+        indices = [int(k) for k in sparse_dict.keys()]
+        values = [float(v) for v in sparse_dict.values()]
+        sparse_vectors.append(models.SparseVector(indices=indices, values=values))
+    return sparse_vectors
+
+
+def _extract_sparse_vector(text: str) -> models.SparseVector:
+    """Single-text convenience wrapper around `_extract_sparse_vectors` (e.g. for a query)."""
+    return _extract_sparse_vectors([text])[0]
 
 
 def build_and_save_index_from_metadata(
@@ -97,31 +117,29 @@ def build_and_save_index_from_metadata(
 
     texts = metadata_df["full_text_for_embedding"].fillna("").tolist()
     segment_ids = metadata_df["segment_id"].tolist()
-    
-    points = []
-    logger.info("Generating Sparse vectors and packaging Qdrant Points...")
-    
-    for idx, (seg_id, text, dense_vec) in enumerate(zip(segment_ids, texts, dense_vectors)):
-        # Gộp cả 2 loại vector vào chung 1 point
-        points.append(
+
+    logger.info("Generating Sparse vectors and packaging Qdrant Points (batched)...")
+    UPLOAD_BATCH = 100
+    for start in range(0, len(texts), UPLOAD_BATCH):
+        batch_texts = texts[start : start + UPLOAD_BATCH]
+        batch_ids = segment_ids[start : start + UPLOAD_BATCH]
+        batch_dense = dense_vectors[start : start + UPLOAD_BATCH]
+
+        # One BGE-M3 forward pass for the whole batch's sparse vectors, not one per row.
+        batch_sparse = _extract_sparse_vectors(batch_texts)
+
+        points = [
             models.PointStruct(
                 id=int(seg_id),
                 vector={
                     "dense": dense_vec.tolist(),
-                    "sparse": _extract_sparse_vector(text)
+                    "sparse": sparse_vec,
                 },
                 # Lưu đính kèm metadata để truy xuất nhanh mà không cần tra ngược Parquet
-                payload={"segment_id": int(seg_id), "text": text}
+                payload={"segment_id": int(seg_id), "text": text},
             )
-        )
-        
-        # Batch upload to avoid RAM overflow
-        if len(points) >= 100:
-            client.upsert(collection_name=COLLECTION_NAME, points=points)
-            points = []
-
-    # Upload remaining points
-    if points:
+            for seg_id, text, dense_vec, sparse_vec in zip(batch_ids, batch_texts, batch_dense, batch_sparse)
+        ]
         client.upsert(collection_name=COLLECTION_NAME, points=points)
         
     logger.info(f"Successfully indexed {len(segment_ids)} segments into Qdrant.")

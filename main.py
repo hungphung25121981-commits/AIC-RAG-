@@ -37,12 +37,6 @@ defaults are pulled from config/settings.yaml; CLI flags override them
 for a single run only (the yaml file itself is never modified).
 """
 
-"""video-visual-rag :: main.py
-
-Single CLI entrypoint for every pipeline task. Each phase is its own
-subcommand so you can re-run just the piece you're iterating on.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -106,24 +100,28 @@ def cmd_extract(args: argparse.Namespace) -> None:
 # ----------------------------------------------------------------------
 def cmd_caption(args: argparse.Namespace) -> None:
     from src.phase2_captioning.metadata_builder import build_corpus_metadata
-    # Thêm import cho hệ thống API mới của Surya 0.6.0
-    from surya.inference import SuryaInferenceManager
+    # Surya v1 API (pure torch, no inference server / no Docker -- see requirements.txt
+    # for why we do NOT use `from surya.inference import SuryaInferenceManager`, which
+    # is Surya >=0.20 and requires spawning vllm-in-Docker or a llama.cpp server).
+    from surya.foundation import FoundationPredictor
     from surya.recognition import RecognitionPredictor
+    from surya.detection import DetectionPredictor
 
-    logger.info("Phase 2: running OCR (Khởi tạo Surya 0.6.0 Inference Manager để quản lý memory)...")
-    
-    # 1. Khởi tạo inference manager và model ở main để load 1 lần duy nhất
-    manager = SuryaInferenceManager()
-    recognition_predictor = RecognitionPredictor(manager)
+    logger.info("Phase 2: running OCR (loading Surya v1 models once, in-process, no Docker)...")
+
+    # 1. Load foundation + recognition + detection models once here, reused for every segment.
+    foundation_predictor = FoundationPredictor()
+    recognition_predictor = RecognitionPredictor(foundation_predictor)
+    detection_predictor = DetectionPredictor()
 
     logger.info("Bắt đầu build metadata với model OCR đã load...")
-    # 2. Truyền predictor trực tiếp xuống pipeline bên dưới
+    # 2. Truyền cả 2 predictor xuống pipeline bên dưới dưới dạng 1 tuple
     build_corpus_metadata(
         keyframe_map_csv=args.keyframe_map,
         video_info_dir=args.video_info_dir,
         keyframes_dir=args.keyframes_dir,
         output_parquet=args.output_parquet,
-        ocr_predictor=recognition_predictor  # <--- Bạn truyền thêm tham số này
+        ocr_predictor=(recognition_predictor, detection_predictor),
     )
     
     free_gpu_memory()
