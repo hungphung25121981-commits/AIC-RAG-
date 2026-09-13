@@ -15,7 +15,7 @@
 # exact inter-package patch compatibility offline -- let pip's resolver pick compatible
 # accelerate/tokenizers/safetensors versions above these floors instead of trusting a
 # guessed-at exact patch number.
-transformers>=4.49.0
+transformers==4.57.3
 accelerate>=1.2.0
 bitsandbytes>=0.44.1
 tokenizers>=0.20.3
@@ -28,7 +28,7 @@ einops>=0.8.0
 # (search_engine/*.py --s/--q/--qa + --rerank calls). Not needed for Phase 2,
 # which never loads the VLM at all.
 peft>=0.13.0
-
+pypdfium2==5.13.0
 
 # ---- Vision-language & visual-similarity ----
 # NOTE: qwen-vl-utils is intentionally NOT installed. This pipeline only ever
@@ -51,7 +51,8 @@ peft>=0.13.0
 # ---- Embeddings ----
 sentence-transformers>=3.2.1
 FlagEmbedding>=1.3.2       # bge-m3 dense/sparse encoder
-
+portalocker>=3.2.0
+huggingface_hub==0.36.2
 # ---- Vector / lexical search ----
 qdrant-client>=1.10.1,<2.0.0      # qdrant-client is pure-Python (no CUDA dep -- the old
                                   # <=1.7.0 pin was based on a false assumption). Qdrant_index.py
