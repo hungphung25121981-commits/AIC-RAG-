@@ -328,7 +328,59 @@ def cmd_shell(args: argparse.Namespace) -> None:
             engine=engine,
         )
         print("\n" + format_answer_with_links(answer) + "\n")
+_notebook_shell_state: dict = {}  # cache metadata_df + engine giữa các câu hỏi
 
+def launch_notebook_shell(metadata: Optional[str] = None):
+    """Gọi trực tiếp từ 1 cell notebook (KHÔNG chạy qua !python main.py)."""
+    try:
+        import ipywidgets as widgets
+        from IPython.display import display, Markdown
+    except ImportError as e:
+        raise RuntimeError("Cần chạy trong Jupyter/Kaggle notebook cell.") from e
+
+    from src.search_engine.generator import answer_question, format_answer_with_links
+
+    cfg = load_config()
+    metadata_path = metadata or cfg["paths"]["metadata_parquet"]
+
+    if "engine" not in _notebook_shell_state or _notebook_shell_state.get("metadata_path") != metadata_path:
+        import pandas as pd
+        from src.search_engine.vlm_engine import get_qwen_engine
+        print(f"Loading metadata ({metadata_path}) và Qwen-VL engine... (chỉ load 1 lần)")
+        _notebook_shell_state["metadata_df"] = pd.read_parquet(metadata_path)
+        _notebook_shell_state["engine"] = get_qwen_engine()
+        _notebook_shell_state["metadata_path"] = metadata_path
+
+    metadata_df = _notebook_shell_state["metadata_df"]
+    engine = _notebook_shell_state["engine"]
+
+    question_box = widgets.Text(placeholder="Nhập câu hỏi rồi Enter...", layout=widgets.Layout(width="80%"))
+    ask_button = widgets.Button(description="Hỏi", button_style="primary")
+    output = widgets.Output()
+
+    def _run_query(_):
+        question = question_box.value.strip()
+        if not question:
+            return
+        question_box.value = ""
+        with output:
+            print(f"query> {question}\n")
+            try:
+                answer = answer_question(question=question, faiss_index=None, bm25_corpus=None,
+                                          metadata_df=metadata_df, engine=engine)
+                display(Markdown(format_answer_with_links(answer)))
+            except Exception as exc:
+                print(f"[error] {exc}")
+            print("\n" + "-" * 60 + "\n")
+
+    ask_button.on_click(_run_query)
+    question_box.on_submit(_run_query)
+    clear_button = widgets.Button(description="Xóa màn hình", button_style="warning")
+    clear_button.on_click(lambda _: output.clear_output())
+
+    display(widgets.HBox([question_box, ask_button, clear_button]))
+    display(output)
+    print("Sẵn sàng nhận câu hỏi.")
 
 # ----------------------------------------------------------------------
 # Full pipeline
