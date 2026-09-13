@@ -87,7 +87,7 @@ phase2:
   caption_empty_fallback: "No on-screen text detected in this segment."
 
   # ---- SigLIP: fast visual-text similarity for frame_selector.py (replaces the old CLIP-ViT-B/32 slot) ----
-  siglip_model_id: "google/siglip2-so400m-patch14-naflex"
+  siglip_model_id: "google/siglip2-so400m-patch16-naflex"
   # SigLIP projects BOTH image and text to this same dimension (must match for the dot-product
   # similarity in visual_embedder.py to be valid -- verified against model.config.projection_dim
   # at load time; a mismatch raises rather than silently producing wrong scores).
