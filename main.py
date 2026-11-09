@@ -133,14 +133,26 @@ def cmd_caption(args: argparse.Namespace) -> None:
 # ----------------------------------------------------------------------
 def cmd_index(args: argparse.Namespace) -> None:
     import pandas as pd
-    from src.phase3_indexing.embedder import embed_metadata_dataframe, unload_embedder
+    from src.phase3_indexing.embedder import (
+        embed_metadata_dataframe,
+        embed_metadata_visuals,
+        unload_embedder,
+    )
     from src.phase3_indexing.Qdrant_index import build_and_save_index_from_metadata
 
     logger.info("Phase 3: building Qdrant hybrid index from %s...", args.metadata)
     metadata_df = pd.read_parquet(args.metadata)
 
-    vectors = embed_metadata_dataframe(metadata_df)
-    build_and_save_index_from_metadata(metadata_df, vectors)
+    dense_vectors = embed_metadata_dataframe(metadata_df)
+    # Multimodal: embed keyframes per segment via SigLIP for visual vector search
+    visual_vectors = None
+    try:
+        visual_vectors = embed_metadata_visuals(metadata_df)
+        logger.info("Generated visual embeddings: shape=%s", visual_vectors.shape)
+    except Exception as exc:
+        logger.warning("Visual keyframe embedding generation skipped/failed (%s); indexing text-only.", exc)
+
+    build_and_save_index_from_metadata(metadata_df, dense_vectors, visual_vectors=visual_vectors)
     unload_embedder()
 
     logger.info("Phase 3 complete.")

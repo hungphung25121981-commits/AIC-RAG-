@@ -76,10 +76,13 @@ def _build_context_block(segments: list[RetrievedSegment]) -> tuple[str, list[Ci
     citations = []
     for i, seg in enumerate(segments, start=1):
         meta = seg.metadata
+        visual_desc = meta.get('visual_caption', '')
+        if "No on-screen text detected" in visual_desc:
+            visual_desc = "(no text detected)"
         lines.append(
             f"[Source {i}] video=\"{meta.get('video_title', 'Unknown')}\" "
             f"time={meta.get('start_time', '?')}s-{meta.get('end_time', '?')}s\n"
-            f"  VISUAL: {meta.get('visual_caption', '')}\n"
+            f"  VISUAL: {visual_desc}\n"
             f"  OCR: {meta.get('ocr_screen_text', '')}"
         )
         citations.append(

@@ -194,6 +194,80 @@ def best_matching_image_index(query: str, image_paths: list[str | Path]) -> Opti
     return int(np.argmax(similarities))
 
 
+def embed_segment_visuals(
+    segment_keyframe_paths: list[list[str | Path]],
+    batch_size: int = 32,
+) -> np.ndarray:
+    """Embed keyframes for a list of segments -> (num_segments, projection_dim) float32 array.
+
+    For each segment, embeds its keyframes and computes the L2-normalized mean vector.
+    Batches image loading and GPU inference for maximum efficiency.
+    """
+    if not segment_keyframe_paths:
+        return np.empty((0, 0), dtype=np.float32)
+
+    import torch
+    from PIL import Image
+
+    model, processor, device = _get_siglip()
+    cfg = load_config()
+    projection_dim = cfg["phase2"].get("siglip_embedding_dim", 1152)
+
+    # Flatten all existing image paths while tracking segment indices
+    flat_paths = []
+    seg_mapping = []  # maps flat_index -> segment_index
+    for seg_idx, paths in enumerate(segment_keyframe_paths):
+        for p in paths:
+            p_obj = Path(p)
+            if p_obj.exists():
+                flat_paths.append(str(p_obj))
+                seg_mapping.append(seg_idx)
+
+    num_segments = len(segment_keyframe_paths)
+    if not flat_paths:
+        logger.warning("No existing keyframe images found on disk to embed; returning zero visual vectors.")
+        return np.zeros((num_segments, projection_dim), dtype=np.float32)
+
+    logger.info("Embedding %d keyframes across %d segments with SigLIP...", len(flat_paths), num_segments)
+
+    # Embed all images in batches
+    all_image_embeds = []
+    for start in range(0, len(flat_paths), batch_size):
+        batch_paths = flat_paths[start : start + batch_size]
+        try:
+            images = [Image.open(p).convert("RGB") for p in batch_paths]
+            inputs = processor(images=images, return_tensors="pt").to(device)
+            with torch.no_grad():
+                image_features = model.get_image_features(**inputs)
+                if hasattr(image_features, 'image_embeds'):
+                    image_features = image_features.image_embeds
+                elif hasattr(image_features, 'pooler_output'):
+                    image_features = image_features.pooler_output
+            image_features = _l2_normalize(image_features.float())
+            all_image_embeds.append(image_features.cpu().numpy().astype(np.float32))
+        except Exception as exc:
+            logger.error("Error embedding image batch [%d:%d]: %s", start, start + len(batch_paths), exc)
+            all_image_embeds.append(np.zeros((len(batch_paths), projection_dim), dtype=np.float32))
+
+    flat_embeds = np.concatenate(all_image_embeds, axis=0) if all_image_embeds else np.empty((0, projection_dim))
+
+    # Aggregate by segment (mean-pooling + L2 normalize)
+    segment_vectors = np.zeros((num_segments, projection_dim), dtype=np.float32)
+    segment_counts = np.zeros(num_segments, dtype=np.int32)
+
+    for embed, seg_idx in zip(flat_embeds, seg_mapping):
+        segment_vectors[seg_idx] += embed
+        segment_counts[seg_idx] += 1
+
+    for seg_idx in range(num_segments):
+        if segment_counts[seg_idx] > 0:
+            vec = segment_vectors[seg_idx] / segment_counts[seg_idx]
+            norm = np.linalg.norm(vec)
+            segment_vectors[seg_idx] = vec / max(norm, 1e-12)
+
+    return segment_vectors
+
+
 def unload_siglip() -> None:
     """Explicitly release the SigLIP model from VRAM (mirrors QwenVLEngine.unload())."""
     global _SIGLIP_SINGLETON

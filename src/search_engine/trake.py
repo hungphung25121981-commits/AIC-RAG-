@@ -104,6 +104,8 @@ def _search_within_video(
         final_top_k=search_top_n,
         dense_top_k=search_top_n,
         sparse_top_k=search_top_n,
+        visual_top_k=search_top_n,
+        video_id=video_id,
     )
     matched = [s for s in segments if s.metadata.get("video_id") == video_id]
     return sorted(matched, key=lambda s: s.fused_score, reverse=True)

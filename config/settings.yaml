@@ -25,7 +25,7 @@ phase1:
                                  # into RAG-retrievable chunks (15-30s range)
   segment_window_min_sec: 15
   segment_window_max_sec: 30
-  max_keyframes_per_segment: 5
+  max_keyframes_per_segment: 6
   min_keyframes_per_segment: 3
   jpeg_quality: 92
   frame_resize_max_side: 1024   # resize longest side before saving (speed + storage)
@@ -108,14 +108,16 @@ phase3:
   embedding_batch_size: 16
   embedding_max_length: 512
   embedding_normalize: true      
+  visual_embedding_dim: 1152
   bm25_k1: 1.5
   bm25_b: 0.75
   bm25_tokenizer: "simple_lower_split"  # see bm25_indexer.py
 
 # ---------------- Phase 4: Hybrid Search & RAG ----------------
 phase4:
-  dense_top_k: 20
-  sparse_top_k: 20
+  dense_top_k: 30
+  sparse_top_k: 30
+  visual_top_k: 30
   rrf_k: 60                      # Reciprocal Rank Fusion constant
   final_top_k: 6                 # segments passed to the generator after fusion
   max_subqueries: 4               # multi-hop decomposition cap
@@ -123,7 +125,7 @@ phase4:
   generator_max_new_tokens: 512
   generator_temperature: 0.3
   generator_top_p: 0.9
-  min_relevance_score: 0.15       # segments below this fused score are dropped
+  min_relevance_score: 0.0        # RRF scores are in [0, ~0.049] (0.0 keeps all ranked candidates)
   timestamp_link_fallback_format: "{video_id}#t={start_time}s"
 
   # ---- CLI: query --s/--q/--qa and `trake` ----

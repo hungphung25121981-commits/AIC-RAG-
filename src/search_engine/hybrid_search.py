@@ -1,8 +1,8 @@
-﻿"""Hybrid search wrapper for Qdrant.
+"""Hybrid search wrapper for Qdrant.
 
-This module now acts as a thin adapter between the Qdrant native hybrid 
-search (which handles Dense + Sparse + RRF internally) and the rest of 
-the pipeline which expects `RetrievedSegment` objects.
+This module acts as a clean adapter between the Qdrant native hybrid 
+search (which handles Dense BGE-M3 + Visual SigLIP + Sparse BM25 + RRF internally)
+and the rest of the pipeline which expects `RetrievedSegment` objects.
 """
 
 from __future__ import annotations
@@ -33,52 +33,71 @@ def hybrid_search(
     query: str,
     faiss_index=None,     # Kept for backward compatibility with CLI, ignored
     bm25_corpus=None,     # Kept for backward compatibility with CLI, ignored
-    metadata_df: pd.DataFrame = None,
-    dense_top_k: Optional[int] = None,   # Ignored by Qdrant (handled by limit/prefetch)
-    sparse_top_k: Optional[int] = None,  # Ignored by Qdrant 
+    metadata_df: Optional[pd.DataFrame] = None,
+    dense_top_k: Optional[int] = None,
+    sparse_top_k: Optional[int] = None,
+    visual_top_k: Optional[int] = None,
     rrf_k: Optional[int] = None,         # Ignored by Qdrant (native RRF used)
     final_top_k: Optional[int] = None,
     min_relevance_score: Optional[float] = None,
+    video_id: Optional[str] = None,
 ) -> list[RetrievedSegment]:
     """Run Qdrant Hybrid Search and format the output as RetrievedSegment."""
-    
     cfg = load_config()
     p4 = cfg["phase4"]
     final_top_k = final_top_k or p4["final_top_k"]
     min_relevance_score = (
-        min_relevance_score if min_relevance_score is not None else p4["min_relevance_score"]
+        min_relevance_score if min_relevance_score is not None else p4.get("min_relevance_score", 0.0)
     )
 
-    # 1. Gọi thẳng hàm của Qdrant (bỏ qua faiss và bm25)
-    raw_results = search_qdrant_hybrid(query=query, top_k=final_top_k)
-    
-    # 2. Tạo lookup dictionary để ghép metadata
+    # RRF score safety: Qdrant's RRF score is sum of 1/(60+rank) <= ~0.049.
+    # If a legacy cosine threshold (> 0.05) was passed in, reset it to 0.0 so it doesn't drop all candidates.
+    if min_relevance_score > 0.05:
+        logger.warning(
+            "min_relevance_score=%s is too high for RRF (max RRF score is ~0.049); adjusting to 0.0.",
+            min_relevance_score,
+        )
+        min_relevance_score = 0.0
+
+    raw_results = search_qdrant_hybrid(
+        query=query,
+        top_k=final_top_k,
+        video_id=video_id,
+        dense_top_k=dense_top_k,
+        sparse_top_k=sparse_top_k,
+        visual_top_k=visual_top_k,
+    )
+
+    metadata_lookup = {}
     if metadata_df is not None:
         metadata_lookup = metadata_df.set_index("segment_id").to_dict(orient="index")
-    else:
-        metadata_lookup = {}
 
-    # 3. Đóng gói kết quả
     scored: list[RetrievedSegment] = []
-    for seg_id, score in raw_results:
-        # Qdrant's RRF score is not normalized to [0,1], but we still apply the threshold
+    for item in raw_results:
+        seg_id = item[0]
+        score = float(item[1])
+        payload = item[2] if len(item) > 2 else {}
+
         if score < min_relevance_score:
             continue
-            
+
+        meta = metadata_lookup.get(seg_id, payload)
+        if not meta and payload:
+            meta = payload
+
         scored.append(
             RetrievedSegment(
                 segment_id=seg_id,
-                fused_score=float(score),
-                metadata=metadata_lookup.get(seg_id, {}),
+                fused_score=score,
+                metadata=meta,
             )
         )
 
-    # Sort again just to be safe, though Qdrant returns them sorted
     scored.sort(key=lambda r: r.fused_score, reverse=True)
-
     logger.info(
-        "qdrant_hybrid_search(%r): returned top %d segments",
+        "qdrant_hybrid_search(%r): returned top %d segments (filter video_id=%s)",
         query[:60],
         len(scored),
+        video_id or "all",
     )
     return scored

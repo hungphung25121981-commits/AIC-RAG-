@@ -66,7 +66,14 @@ def _build_jump_link(video_info: dict[str, Any], video_id: str, start_time: floa
 
 
 def _make_full_text_for_embedding(video_title: str, visual_caption: str, ocr_text: str) -> str:
-    return f"TITLE: {video_title} | VISUAL: {visual_caption} | OCR: {ocr_text}"
+    parts = []
+    if video_title and video_title != "Unknown Title":
+        parts.append(f"TITLE: {video_title}")
+    if visual_caption and "No on-screen text detected" not in visual_caption:
+        parts.append(f"VISUAL: {visual_caption}")
+    if ocr_text and ocr_text.strip():
+        parts.append(f"OCR: {ocr_text.strip()}")
+    return " | ".join(parts) if parts else f"TITLE: {video_title}"
 
 
 def build_metadata_for_video(

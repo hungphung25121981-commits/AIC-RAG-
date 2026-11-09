@@ -58,10 +58,12 @@ def search_and_rank(
         bm25_corpus=bm25_corpus,
         metadata_df=metadata_df,
         final_top_k=search_top_n,
+        video_id=video_id,
     )
     if video_id:
         search_kwargs["dense_top_k"] = search_top_n
         search_kwargs["sparse_top_k"] = search_top_n
+        search_kwargs["visual_top_k"] = search_top_n
 
     segments = hybrid_search(**search_kwargs)
 

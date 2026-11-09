@@ -97,6 +97,43 @@ def embed_metadata_dataframe(
     return vectors
 
 
+def embed_metadata_visuals(
+    metadata_df: pd.DataFrame,
+    keyframes_dir: Optional[str | Path] = None,
+) -> np.ndarray:
+    """Generate segment-level visual embeddings for metadata_df using SigLIP.
+
+    For each segment, extracts its keyframe images and mean-pools them to
+    produce a unit-norm (1152-dim) multimodal vector for Qdrant.
+    """
+    cfg = load_config()
+    keyframes_dir = Path(keyframes_dir or cfg["paths"]["keyframes_dir"])
+
+    assert list(metadata_df["segment_id"]) == list(range(len(metadata_df))), (
+        "metadata_df must have contiguous segment_id 0..N-1 sorted ascending."
+    )
+
+    segment_keyframe_paths: list[list[str | Path]] = []
+    for _, row in metadata_df.iterrows():
+        k_list = row.get("keyframes_list")
+        if k_list is None or (isinstance(k_list, float) and np.isnan(k_list)):
+            f_ids = []
+        elif isinstance(k_list, (list, np.ndarray)):
+            f_ids = list(k_list)
+        else:
+            f_ids = []
+        paths = [keyframes_dir / f"{fid}.jpg" for fid in f_ids]
+        segment_keyframe_paths.append(paths)
+
+    from src.phase2_captioning.visual_embedder import embed_segment_visuals, unload_siglip
+
+    visual_vectors = embed_segment_visuals(segment_keyframe_paths)
+    unload_siglip()
+    gc.collect()
+    free_gpu_memory()
+    return visual_vectors
+
+
 def unload_embedder() -> None:
     global _EMBEDDER_SINGLETON
     _EMBEDDER_SINGLETON = None

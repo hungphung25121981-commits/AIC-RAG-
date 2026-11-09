@@ -100,10 +100,13 @@ def _format_segments_for_judge(segments: list[RetrievedSegment]) -> str:
     lines = []
     for i, seg in enumerate(segments):
         meta = seg.metadata
+        visual_info = meta.get('visual_caption', '')
+        if "No on-screen text detected" in visual_info:
+            visual_info = "(visual content indexed via video frames)"
         lines.append(
             f"[{i}] video={meta.get('video_title', 'Unknown')} "
             f"t={meta.get('start_time', '?')}-{meta.get('end_time', '?')}s | "
-            f"VISUAL: {meta.get('visual_caption', '')[:200]} | "
+            f"VISUAL: {visual_info[:200]} | "
             f"OCR: {meta.get('ocr_screen_text', '')[:200]}"
         )
     return "\n".join(lines)
